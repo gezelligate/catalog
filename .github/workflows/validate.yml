@@ -26,13 +26,24 @@ jobs:
       - name: Structural validation
         run: pnpm validate
 
+      - name: Build compiled lifecycles
+        run: pnpm build
+
+      - name: Ensure compiled lifecycles are committed
+        run: |
+          if ! git diff --quiet providers; then
+            echo "::error::compiled provider files are out of date - run 'pnpm build' and commit the result."
+            git --no-pager diff providers
+            exit 1
+          fi
+
       - name: Regenerate catalog.json
         run: pnpm generate-catalog-json
 
       - name: Ensure committed catalog.json matches generator output
         run: |
           if ! git diff --quiet catalog.json; then
-            echo "::error::catalog.json is out of date — run 'pnpm generate-catalog-json' and commit the result."
+            echo "::error::catalog.json is out of date - run 'pnpm generate-catalog-json' and commit the result."
             git --no-pager diff catalog.json
             exit 1
           fi

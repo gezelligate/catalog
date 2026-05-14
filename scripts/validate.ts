@@ -37,7 +37,9 @@ async function exists(p: string): Promise<boolean> {
 
 async function listDirs(parent: string): Promise<string[]> {
   const entries = await fs.readdir(parent, { withFileTypes: true });
-  return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  return entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith("_") && !e.name.startsWith("."))
+    .map((e) => e.name);
 }
 
 async function validateRecipe(name: string): Promise<void> {

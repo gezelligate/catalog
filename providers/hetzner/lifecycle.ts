@@ -5,7 +5,7 @@ import type {
   LifecycleContext
 } from "@gezelligate/core/providers/lifecycle";
 import type { ClusterYaml } from "@gezelligate/core/schema/clusterYaml";
-import { fetchWithTimeout } from "@gezelligate/studio/server/lib/fetchWithTimeout";
+import { fetchWithTimeout } from "../_shared/fetchWithTimeout.js";
 
 const HETZNER_API = "https://api.hetzner.cloud/v1";
 

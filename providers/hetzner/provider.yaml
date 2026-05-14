@@ -54,6 +54,8 @@ templates:
   - templates/variables.tf.tmpl
   - templates/outputs.tf.tmpl
 
+lifecycleModule: lifecycle.js
+
 capabilities:
   hasLoadBalancerIp: true
   supportsResourceList: true

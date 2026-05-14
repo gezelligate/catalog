@@ -1,5 +1,5 @@
 import type { ClusterLifecycle } from "@gezelligate/core/providers/lifecycle";
-import { fetchWithTimeout } from "@gezelligate/studio/server/lib/fetchWithTimeout";
+import { fetchWithTimeout } from "../_shared/fetchWithTimeout.js";
 
 const VALIDATE_URL = (projectId: string) =>
   `https://api.scaleway.com/account/v3/projects?project_ids=${encodeURIComponent(projectId)}`;
