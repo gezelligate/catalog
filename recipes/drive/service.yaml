@@ -1,0 +1,90 @@
+name: drive
+displayName: Drive
+description: La Suite Drive — file storage, sharing, and organization with team workspaces. Maintained by France's DINUM.
+category: productivity
+required: false
+icon: drive.svg
+
+form:
+  - key: subdomain
+    label: Subdomain
+    type: string
+    default: drive
+    help: Will be served at <subdomain>.<your-domain> in public mode
+
+dependencies:
+  - service: keycloak
+    reason: Single sign-on
+    required: true
+
+# Like Docs, Drive ships an inline `drive-minio` instance because the catalog
+# has no shared S3 service yet and Drive is the second consumer. When a third
+# service needs object storage, promote to /repository/minio.
+secrets:
+  - key: DJANGO_SECRET_KEY
+    generator: hex
+    length: 64
+  - key: DB_PASSWORD
+    generator: password
+    length: 32
+  - key: OIDC_CLIENT_SECRET
+    generator: password
+    length: 48
+  - key: MINIO_ROOT_USER
+    generator: password
+    length: 16
+  - key: MINIO_ROOT_PASSWORD
+    generator: password
+    length: 32
+
+database:
+  engine: postgres
+  preferShared: true
+  name: drive
+  user: drive
+
+redis:
+  preferShared: true
+
+provides:
+  oidcClient:
+    clientId: drive
+    redirectUris:
+      - "https://{{form.subdomain}}.{{global.baseDomain}}/*"
+      - "http://localhost:8084/*"
+    scopes: [openid, email]
+  ingress:
+    host: "{{form.subdomain}}.{{global.baseDomain}}"
+    port: 8084
+  bridge:
+    tile:
+      name: "Drive"
+      icon: "/icons/drive.svg"
+      url: "https://{{form.subdomain}}.{{global.baseDomain}}"
+    recentItems:
+      api:
+        endpoint: "/api/v1.0/items/?ordering=-updated_at&page_size=5"
+        limit: 5
+        mapping:
+          id: "id"
+          title: "title"
+          url: "absolute_url"
+          timestamp: "updated_at"
+    search:
+      api:
+        method: GET
+        endpoint: "/api/v1.0/items/?q={q}&page_size=10"
+        auth: oidc-passthrough
+        mapping:
+          id: id
+          title: title
+          url: absolute_url
+          timestamp: updated_at
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: __inline__
+    helmVersion: "inline"
+    valuesTemplate: templates/k8s-manifests.yaml.tmpl

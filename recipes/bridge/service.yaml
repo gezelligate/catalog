@@ -1,0 +1,59 @@
+name: bridge
+displayName: Launcher
+description: Apex-domain launcher with tiles, activity badges, and recent items across your stack.
+category: portal
+required: false
+
+form: []
+
+dependencies:
+  - service: keycloak
+    reason: Single sign-on + token exchange for vendor API calls
+    required: true
+  - service: postgres
+    reason: Bridge owns a small DB for session state and future search index
+    required: true
+
+secrets:
+  - key: DB_PASSWORD
+    generator: password
+    length: 32
+  - key: OIDC_CLIENT_SECRET
+    generator: password
+    length: 48
+  - key: SESSION_SECRET
+    generator: hex
+    length: 64
+  - key: BRIDGE_READER_DB_PASSWORD
+    generator: password
+    length: 32
+
+database:
+  engine: postgres
+  preferShared: true
+  name: bridge
+  user: bridge
+
+provides:
+  bridgeReader:
+    roleName: bridge_reader
+    passwordEnv: BRIDGE_READER_DB_PASSWORD
+  oidcClient:
+    clientId: bridge
+    redirectUris:
+      - "https://{{global.baseDomain}}/auth/callback"
+      - "http://localhost:8090/auth/callback"
+    scopes: [openid, profile, email]
+    userinfoFormat: oidc
+    tokenExchange: true
+  ingress:
+    host: "{{global.baseDomain}}"
+    port: 8090
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: __inline__
+    helmVersion: "inline"
+    valuesTemplate: templates/k8s-manifests.yaml.tmpl

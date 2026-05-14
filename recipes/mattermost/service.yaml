@@ -1,0 +1,90 @@
+name: mattermost
+displayName: Mattermost
+description: Self-hosted team chat with channels, threads, and integrations. Logs in with your Keycloak account.
+category: communication
+required: false
+icon: mattermost.svg
+
+form:
+  - key: subdomain
+    label: Subdomain
+    type: string
+    default: chat
+    help: Will be served at <subdomain>.<your-domain> in public mode
+
+dependencies:
+  - service: keycloak
+    reason: Single sign-on
+    required: true
+
+secrets:
+  - key: DB_PASSWORD
+    generator: password
+    length: 32
+  - key: OIDC_CLIENT_SECRET
+    generator: password
+    length: 48
+
+database:
+  engine: postgres
+  preferShared: true
+  name: mattermost
+  user: mattermost
+
+provides:
+  oidcClient:
+    clientId: mattermost
+    redirectUris:
+      - "https://{{form.subdomain}}.{{global.baseDomain}}/signup/gitlab/complete"
+      - "https://{{form.subdomain}}.{{global.baseDomain}}/login/gitlab/complete"
+      - "http://localhost:8065/signup/gitlab/complete"
+      - "http://localhost:8065/login/gitlab/complete"
+    # Mattermost Team Edition's `gitlab` OAuth provider is the only OAuth
+    # provider compiled into the open-source binary; the `openid` provider is
+    # gated behind the enterprise build tag. Two consequences for our scope:
+    #   1. Scope must NOT contain "openid" — Mattermost rewrites the provider
+    #      lookup `gitlab → openid` whenever it sees that token, and the lookup
+    #      then returns nil → 501.
+    #   2. The provider expects a GitLab-shape userinfo response (`id` numeric,
+    #      `username`, `name`, `email`). We tell Keycloak to emit that via
+    #      `userinfoFormat: gitlab`, which attaches the right protocol mappers
+    #      to this client in the realm-import.
+    scopes: [profile, email]
+    userinfoFormat: gitlab
+  ingress:
+    host: "{{form.subdomain}}.{{global.baseDomain}}"
+    port: 8065
+    # mattermost/mattermost-team-edition chart creates Service `mattermost-team-edition`
+    # (release prefix is stripped by the chart's `fullname` helper).
+    k8s:
+      service: mattermost-team-edition
+      port: 8065
+  bridge:
+    tile:
+      name: "Mattermost"
+      icon: "/icons/mattermost.svg"
+      url: "https://{{form.subdomain}}.{{global.baseDomain}}"
+    activity:
+      api:
+        unreadEndpoint: "/api/v4/users/me/teams/unread"
+        auth: oidc-passthrough
+    search:
+      api:
+        method: POST
+        endpoint: "/api/v4/posts/search"
+        body: '{"terms":"{q}","is_or_search":true,"include_deleted_channels":false,"time_zone_offset":0,"page":0,"per_page":10}'
+        auth: oidc-passthrough
+        mapping:
+          id: id
+          title: channel_id
+          url: id
+          timestamp: update_at
+          snippet: message
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: mattermost/mattermost-team-edition
+    helmVersion: "6.6.56"
+    valuesTemplate: templates/helm-values.yaml.tmpl

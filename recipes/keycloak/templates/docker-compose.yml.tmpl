@@ -1,0 +1,22 @@
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    restart: unless-stopped
+    depends_on:
+      - {{db.host}}
+    command: start --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://{{db.host}}:{{db.port}}/{{db.name}}
+      KC_DB_USERNAME: {{db.user}}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge
+    volumes:
+      - ./realm-import.json:/opt/keycloak/data/import/realm-import.json:ro
+{{#if (eq global.mode "local")}}
+    ports:
+      - "8080:8080"
+{{/if}}

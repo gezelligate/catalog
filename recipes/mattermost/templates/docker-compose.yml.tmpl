@@ -1,0 +1,40 @@
+  mattermost:
+    image: mattermost/mattermost-team-edition:release-10.4
+    restart: unless-stopped
+    depends_on:
+      - {{db.host}}
+      - keycloak
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: "postgres://{{db.user}}:${MATTERMOST_DB_PASSWORD}@{{db.host}}:{{db.port}}/{{db.name}}?sslmode=disable&connect_timeout=10"
+      MM_SERVICESETTINGS_SITEURL: "{{#if (eq global.mode "local")}}http://localhost:8065{{else}}https://{{form.subdomain}}.{{global.baseDomain}}{{/if}}"
+      TZ: "{{global.timezone}}"
+      MM_GITLABSETTINGS_ENABLE: "true"
+      MM_GITLABSETTINGS_ID: mattermost
+      MM_GITLABSETTINGS_SECRET: "${MATTERMOST_OIDC_CLIENT_SECRET}"
+      MM_GITLABSETTINGS_AUTHENDPOINT: "{{#if (eq global.mode "local")}}http://localhost:8080{{else}}https://auth.{{global.baseDomain}}{{/if}}/realms/gezelligate/protocol/openid-connect/auth"
+      MM_GITLABSETTINGS_TOKENENDPOINT: "http://keycloak:8080/realms/gezelligate/protocol/openid-connect/token"
+      MM_GITLABSETTINGS_USERAPIENDPOINT: "http://keycloak:8080/realms/gezelligate/protocol/openid-connect/userinfo"
+      MM_GITLABSETTINGS_DISCOVERYENDPOINT: "http://keycloak:8080/realms/gezelligate/.well-known/openid-configuration"
+      # Must NOT contain "openid" — Mattermost Team Edition's `gitlab` provider
+      # rewrites the lookup `gitlab → openid` when the scope contains that
+      # token, and the openid provider is enterprise-only.
+      MM_GITLABSETTINGS_SCOPE: "profile email"
+      MM_TEAMSETTINGS_ENABLEUSERCREATION: "true"
+    volumes:
+      - mattermost-data:/mattermost/data
+      - mattermost-config:/mattermost/config
+      - mattermost-logs:/mattermost/logs
+      - mattermost-plugins:/mattermost/plugins
+      - mattermost-client-plugins:/mattermost/client/plugins
+{{#if (eq global.mode "local")}}
+    ports:
+      - "8065:8065"
+{{/if}}
+
+volumes:
+  mattermost-data:
+  mattermost-config:
+  mattermost-logs:
+  mattermost-plugins:
+  mattermost-client-plugins:

@@ -1,0 +1,62 @@
+name: hetzner
+displayName: Hetzner Cloud (k3s)
+description: >
+  k3s Kubernetes on Hetzner Cloud servers (fsn1, nbg1, hel1, ash, hil).
+  Low-cost VPS cluster with one control plane plus N workers, provisioned
+  via cloud-init.
+kind: cluster
+
+geographies:
+  - { id: fsn1, label: "Falkenstein, Germany (fsn1)" }
+  - { id: nbg1, label: "Nuremberg, Germany (nbg1)" }
+  - { id: hel1, label: "Helsinki, Finland (hel1)" }
+  - { id: ash,  label: "Ashburn, Virginia, USA (ash)" }
+  - { id: hil,  label: "Hillsboro, Oregon, USA (hil)" }
+
+controlPlane: { mode: self }
+
+# Server types Hetzner currently accepts new orders for, verified against
+# /v1/server_types with per-location availability. The generation naming is:
+#   cx<N>3  — latest Intel shared (Ampere-based in some locations)
+#   cpx<N>2 — latest AMD shared (EPYC)
+#   cpx<N>1 — previous AMD shared (still orderable in most locations)
+#   cax<N>1 — ARM64 shared (Ampere)
+#   ccx<N>3 — dedicated x86
+nodeTypes:
+  - { id: cx23,  label: "cx23 (2 vCPU / 4 GB Intel shared)",  vcpu: 2,  memory: 4 }
+  - { id: cx33,  label: "cx33 (4 vCPU / 8 GB Intel shared)",  vcpu: 4,  memory: 8 }
+  - { id: cx43,  label: "cx43 (8 vCPU / 16 GB Intel shared)", vcpu: 8,  memory: 16 }
+  - { id: cx53,  label: "cx53 (16 vCPU / 32 GB Intel shared)", vcpu: 16, memory: 32 }
+  - { id: cpx22, label: "cpx22 (2 vCPU / 4 GB AMD shared)",   vcpu: 2,  memory: 4 }
+  - { id: cpx32, label: "cpx32 (4 vCPU / 8 GB AMD shared)",   vcpu: 4,  memory: 8 }
+  - { id: cpx42, label: "cpx42 (8 vCPU / 16 GB AMD shared)",  vcpu: 8,  memory: 16 }
+  - { id: cpx52, label: "cpx52 (12 vCPU / 24 GB AMD shared)", vcpu: 12, memory: 24 }
+  - { id: cax11, label: "cax11 (2 vCPU / 4 GB ARM64 shared)",  vcpu: 2,  memory: 4 }
+  - { id: cax21, label: "cax21 (4 vCPU / 8 GB ARM64 shared)",  vcpu: 4,  memory: 8 }
+  - { id: cax31, label: "cax31 (8 vCPU / 16 GB ARM64 shared)", vcpu: 8,  memory: 16 }
+  - { id: cax41, label: "cax41 (16 vCPU / 32 GB ARM64 shared)", vcpu: 16, memory: 32 }
+
+credentials:
+  - key: apiToken
+    label: Hetzner Cloud API token
+    type: string
+    required: true
+    help: Read+write token for the Hetzner project where the cluster will run.
+
+presets:
+  - { key: trial,  label: "Just trying it out", hint: "1–5 people",    controlPlaneType: cx23, nodePoolType: cx23, nodeCount: 1 }
+  - { key: small,  label: "Small team",         hint: "6–20 people",   controlPlaneType: cx23, nodePoolType: cx33, nodeCount: 2 }
+  - { key: medium, label: "Medium team",        hint: "21–75 people",  controlPlaneType: cx33, nodePoolType: cx43, nodeCount: 2 }
+  - { key: large,  label: "Large team",         hint: "76–200 people", controlPlaneType: cx33, nodePoolType: cx43, nodeCount: 3 }
+
+templates:
+  - templates/main.tf.tmpl
+  - templates/variables.tf.tmpl
+  - templates/outputs.tf.tmpl
+
+capabilities:
+  hasLoadBalancerIp: true
+  supportsResourceList: true
+
+docs:
+  credentials: https://docs.hetzner.com/cloud/api/getting-started/generating-api-token/

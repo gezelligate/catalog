@@ -1,0 +1,508 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: drive-minio-data
+  namespace: gezelligate
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drive-minio
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drive-minio
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: drive-minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+          args: ["server", "--console-address", ":9001", "/data"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: MINIO_ROOT_PASSWORD
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: drive-minio-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drive-minio
+  namespace: gezelligate
+spec:
+  selector:
+    app: drive-minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+# One-shot bucket creation. The Job waits for minio to be ready then creates
+# the drive-media-storage bucket and enables versioning. Re-runs are idempotent
+# because `mc mb --ignore-existing` no-ops on existing buckets.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: drive-createbuckets
+  namespace: gezelligate
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until mc alias set s3 http://drive-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" 2>/dev/null; do
+                echo "waiting for drive-minio..."
+                sleep 2
+              done
+              mc mb --ignore-existing s3/drive-media-storage
+              mc version enable s3/drive-media-storage
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: MINIO_ROOT_PASSWORD
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drive-backend
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drive-backend
+  template:
+    metadata:
+      labels:
+        app: drive-backend
+    spec:
+      # Run Django migrations on every rollout. Idempotent (Django no-ops if
+      # the schema is up to date), so safe to run on each pod start. Without
+      # this, OIDC callbacks fail because the image ships without a prebaked
+      # schema.
+      initContainers:
+        - name: migrate
+          image: lasuite/drive-backend:v0.10.0
+          command: ["python", "manage.py", "migrate", "--no-input"]
+          envFrom:
+            - secretRef:
+                name: drive-env
+          env:
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: DJANGO_SETTINGS_MODULE
+              value: drive.settings
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "{{form.subdomain}}.{{global.baseDomain}}"
+            - name: PYTHONPATH
+              value: /app
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: OIDC_RP_CLIENT_ID
+              value: drive
+            - name: OIDC_RP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: OIDC_CLIENT_SECRET
+      containers:
+        - name: backend
+          image: lasuite/drive-backend:v0.10.0
+          envFrom:
+            - secretRef:
+                name: drive-env
+          env:
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: DJANGO_SETTINGS_MODULE
+              value: drive.settings
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "{{form.subdomain}}.{{global.baseDomain}}"
+            - name: PYTHONPATH
+              value: /app
+            - name: LOGGING_LEVEL_HANDLERS_CONSOLE
+              value: ERROR
+            - name: LOGGING_LEVEL_LOGGERS_ROOT
+              value: INFO
+            - name: LOGGING_LEVEL_LOGGERS_APP
+              value: INFO
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: REDIS_URL
+              value: "redis://{{redis.host}}:{{redis.port}}/4"
+            - name: AWS_S3_ENDPOINT_URL
+              value: "http://drive-minio:9000"
+            - name: AWS_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: MINIO_ROOT_USER
+            - name: AWS_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: MINIO_ROOT_PASSWORD
+            - name: AWS_S3_REGION_NAME
+              value: us-east-1
+            - name: AWS_S3_SIGNATURE_VERSION
+              value: s3v4
+            - name: AWS_STORAGE_BUCKET_NAME
+              value: drive-media-storage
+            - name: MEDIA_BASE_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: OIDC_OP_AUTHORIZATION_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/auth"
+            - name: OIDC_OP_LOGOUT_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/logout"
+            - name: OIDC_OP_TOKEN_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/token"
+            - name: OIDC_OP_USER_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/userinfo"
+            - name: OIDC_OP_JWKS_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/certs"
+            - name: OIDC_RP_CLIENT_ID
+              value: drive
+            # Re-export the drive-env Secret's OIDC_CLIENT_SECRET under the
+            # exact name mozilla-django-oidc reads (OIDC_RP_CLIENT_SECRET).
+            # envFrom alone exposes the literal key name; without this remap
+            # Drive would see an empty secret and Keycloak would return
+            # invalid_client_credentials at /api/v1.0/callback/.
+            - name: OIDC_RP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: OIDC_CLIENT_SECRET
+            - name: OIDC_RP_SIGN_ALGO
+              value: RS256
+            - name: OIDC_RP_SCOPES
+              value: "openid email"
+            - name: LOGIN_REDIRECT_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: LOGIN_REDIRECT_URL_FAILURE
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: LOGOUT_REDIRECT_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: OIDC_REDIRECT_ALLOWED_HOSTS
+              value: '["https://{{form.subdomain}}.{{global.baseDomain}}"]'
+            - name: WOPI_CLIENTS
+              value: ""
+            - name: FEATURES_INDEXED_SEARCH
+              value: "False"
+            - name: DJANGO_EMAIL_BRAND_NAME
+              value: "Drive"
+            - name: DJANGO_EMAIL_URL_APP
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drive-backend
+  namespace: gezelligate
+spec:
+  selector:
+    app: drive-backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drive-celery
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drive-celery
+  template:
+    metadata:
+      labels:
+        app: drive-celery
+    spec:
+      containers:
+        - name: celery
+          image: lasuite/drive-backend:v0.10.0
+          args: ["celery", "-A", "drive.celery_app", "worker", "-l", "INFO"]
+          envFrom:
+            - secretRef:
+                name: drive-env
+          env:
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: DJANGO_SETTINGS_MODULE
+              value: drive.settings
+            - name: PYTHONPATH
+              value: /app
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: REDIS_URL
+              value: "redis://{{redis.host}}:{{redis.port}}/4"
+            - name: AWS_S3_ENDPOINT_URL
+              value: "http://drive-minio:9000"
+            - name: AWS_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: MINIO_ROOT_USER
+            - name: AWS_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: MINIO_ROOT_PASSWORD
+            - name: AWS_S3_REGION_NAME
+              value: us-east-1
+            - name: AWS_S3_SIGNATURE_VERSION
+              value: s3v4
+            - name: AWS_STORAGE_BUCKET_NAME
+              value: drive-media-storage
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drive-celery-beat
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drive-celery-beat
+  # Beat must be a singleton — two schedulers would double-fire the
+  # `clean-pending-items` and `purge-deleted-items` cron tasks.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: drive-celery-beat
+    spec:
+      containers:
+        - name: beat
+          image: lasuite/drive-backend:v0.10.0
+          args:
+            - celery
+            - -A
+            - drive.celery_app
+            - beat
+            - -l
+            - INFO
+            - --schedule=/tmp/celerybeat-schedule
+          envFrom:
+            - secretRef:
+                name: drive-env
+          env:
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: DJANGO_SETTINGS_MODULE
+              value: drive.settings
+            - name: PYTHONPATH
+              value: /app
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: REDIS_URL
+              value: "redis://{{redis.host}}:{{redis.port}}/4"
+---
+# Public-facing nginx ingress. Routes /api, /admin, /external_api → backend,
+# /media + /media/preview → minio (with auth_request through backend),
+# everything else → frontend.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: drive-ingress-nginx
+  namespace: gezelligate
+data:
+  default.conf: |
+    upstream drive_backend {
+        server drive-backend:8000 fail_timeout=0;
+    }
+    upstream drive_frontend {
+        server 127.0.0.1:8080 fail_timeout=0;
+    }
+
+    server {
+        listen 8084;
+        server_name _;
+        charset utf-8;
+        client_max_body_size 100m;
+        server_tokens off;
+
+        location @proxy_to_backend {
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+            proxy_redirect off;
+            proxy_pass http://drive_backend;
+        }
+        location @proxy_to_frontend {
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+            proxy_redirect off;
+            proxy_pass http://drive_frontend;
+        }
+
+        location / { try_files $uri @proxy_to_frontend; }
+        location /api { try_files $uri @proxy_to_backend; }
+        location /admin { try_files $uri @proxy_to_backend; }
+        location /external_api { try_files $uri @proxy_to_backend; }
+        location /static { try_files $uri @proxy_to_backend; }
+
+        location /media/ {
+            auth_request /media-auth;
+            auth_request_set $authHeader $upstream_http_authorization;
+            auth_request_set $authDate $upstream_http_x_amz_date;
+            auth_request_set $authContentSha256 $upstream_http_x_amz_content_sha256;
+
+            proxy_set_header Authorization $authHeader;
+            proxy_set_header X-Amz-Date $authDate;
+            proxy_set_header X-Amz-Content-SHA256 $authContentSha256;
+
+            proxy_pass http://drive-minio:9000/drive-media-storage/;
+            proxy_set_header Host drive-minio:9000;
+
+            add_header Content-Disposition "attachment";
+        }
+
+        location /media/preview/ {
+            auth_request /media-auth;
+            auth_request_set $authHeader $upstream_http_authorization;
+            auth_request_set $authDate $upstream_http_x_amz_date;
+            auth_request_set $authContentSha256 $upstream_http_x_amz_content_sha256;
+
+            proxy_set_header Authorization $authHeader;
+            proxy_set_header X-Amz-Date $authDate;
+            proxy_set_header X-Amz-Content-SHA256 $authContentSha256;
+
+            proxy_pass http://drive-minio:9000/drive-media-storage/;
+            proxy_set_header Host drive-minio:9000;
+        }
+
+        location /media-auth {
+            proxy_pass http://drive_backend/api/v1.0/items/media-auth/;
+            proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Original-URL $request_uri;
+
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Original-Method $request_method;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drive
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drive
+  template:
+    metadata:
+      labels:
+        app: drive
+    spec:
+      containers:
+        - name: frontend
+          image: lasuite/drive-frontend:v0.10.0
+          ports:
+            - containerPort: 8084
+            - containerPort: 8080
+          volumeMounts:
+            - name: ingress-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+      volumes:
+        - name: ingress-conf
+          configMap:
+            name: drive-ingress-nginx
+            items:
+              - key: default.conf
+                path: default.conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drive
+  namespace: gezelligate
+spec:
+  selector:
+    app: drive
+  ports:
+    - port: 8084
+      targetPort: 8084

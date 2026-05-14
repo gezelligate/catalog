@@ -1,0 +1,82 @@
+{
+  "recipes": [
+    {
+      "name": "bridge",
+      "displayName": "Launcher",
+      "category": "portal",
+      "description": "Apex-domain launcher with tiles, activity badges, and recent items across your stack.",
+      "required": false
+    },
+    {
+      "name": "docs",
+      "displayName": "Docs",
+      "category": "productivity",
+      "description": "La Suite Docs — collaborative wiki and documentation platform with real-time editing. Maintained by France's DINUM.",
+      "required": false
+    },
+    {
+      "name": "drive",
+      "displayName": "Drive",
+      "category": "productivity",
+      "description": "La Suite Drive — file storage, sharing, and organization with team workspaces. Maintained by France's DINUM.",
+      "required": false
+    },
+    {
+      "name": "keycloak",
+      "displayName": "Keycloak",
+      "category": "auth",
+      "description": "Identity and SSO provider. Required by every other service in the stack.",
+      "required": true
+    },
+    {
+      "name": "livekit",
+      "displayName": "LiveKit Media Server",
+      "category": "infrastructure",
+      "description": "WebRTC SFU used by Meet for video and audio. Auto-included whenever Meet is enabled. Never shown in the wizard.",
+      "required": false,
+      "hidden": true
+    },
+    {
+      "name": "mattermost",
+      "displayName": "Mattermost",
+      "category": "communication",
+      "description": "Self-hosted team chat with channels, threads, and integrations. Logs in with your Keycloak account.",
+      "required": false
+    },
+    {
+      "name": "meet",
+      "displayName": "Meet (video conferencing)",
+      "category": "communication",
+      "description": "La Suite Meet — open-source video conferencing built on LiveKit. Replaces Jitsi.",
+      "required": false
+    },
+    {
+      "name": "postgres",
+      "displayName": "Shared PostgreSQL",
+      "category": "infrastructure",
+      "description": "Single Postgres instance shared by all services that declare database.shared. Auto-included — never shown in the wizard.",
+      "required": false,
+      "hidden": true
+    },
+    {
+      "name": "redis",
+      "displayName": "Shared Redis",
+      "category": "infrastructure",
+      "description": "Single Redis instance shared by all services that declare redis.shared. Auto-included — never shown in the wizard.",
+      "required": false,
+      "hidden": true
+    }
+  ],
+  "providers": [
+    {
+      "name": "hetzner",
+      "displayName": "Hetzner Cloud (k3s)"
+    },
+    {
+      "name": "scaleway",
+      "displayName": "Scaleway Kapsule"
+    }
+  ],
+  "ref": "local",
+  "generatedAt": "2026-05-14T09:23:45.996Z"
+}

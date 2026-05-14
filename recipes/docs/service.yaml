@@ -1,0 +1,108 @@
+name: docs
+displayName: Docs
+description: La Suite Docs — collaborative wiki and documentation platform with real-time editing. Maintained by France's DINUM.
+category: productivity
+required: false
+icon: docs.svg
+
+form:
+  - key: subdomain
+    label: Subdomain
+    type: string
+    default: docs
+    help: Will be served at <subdomain>.<your-domain> in public mode
+
+dependencies:
+  - service: keycloak
+    reason: Single sign-on
+    required: true
+
+# Object storage (Minio) is bundled inline as `docs-minio` rather than declared
+# as a shared service: the catalog has no shared S3 service yet, and Docs is
+# the only consumer for now. Promote to /repository/minio when a second
+# service needs it.
+secrets:
+  - key: DJANGO_SECRET_KEY
+    generator: hex
+    length: 64
+  - key: DB_PASSWORD
+    generator: password
+    length: 32
+  - key: OIDC_CLIENT_SECRET
+    generator: password
+    length: 48
+  - key: Y_PROVIDER_API_KEY
+    generator: hex
+    length: 48
+  - key: COLLABORATION_SERVER_SECRET
+    generator: hex
+    length: 48
+  - key: MINIO_ROOT_USER
+    generator: password
+    length: 16
+  - key: MINIO_ROOT_PASSWORD
+    generator: password
+    length: 32
+
+database:
+  engine: postgres
+  preferShared: true
+  name: docs
+  user: docs
+
+redis:
+  preferShared: true
+
+provides:
+  oidcClient:
+    clientId: docs
+    redirectUris:
+      - "https://{{form.subdomain}}.{{global.baseDomain}}/*"
+      - "http://localhost:8083/*"
+    scopes: [openid, email]
+  ingress:
+    host: "{{form.subdomain}}.{{global.baseDomain}}"
+    port: 8083
+  bridge:
+    tile:
+      name: "Docs"
+      icon: "/icons/docs.svg"
+      url: "https://{{form.subdomain}}.{{global.baseDomain}}"
+    recentItems:
+      api:
+        endpoint: "/api/v1.0/documents/?ordering=-updated_at&page_size=5"
+        limit: 5
+        mapping:
+          id: "id"
+          title: "title"
+          url: "absolute_url"
+          timestamp: "updated_at"
+    search:
+      api:
+        method: GET
+        endpoint: "/api/v1.0/documents/?q={q}&page_size=10"
+        auth: oidc-passthrough
+        mapping:
+          id: id
+          title: title
+          url: absolute_url
+          timestamp: updated_at
+          snippet: excerpt
+      index:
+        table: "public.documents"
+        where: "is_public = true AND deleted_at IS NULL"
+        watermark: "updated_at"
+        fields:
+          id: id
+          title: title
+          body: content
+          url: absolute_url
+          timestamp: updated_at
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: __inline__
+    helmVersion: "inline"
+    valuesTemplate: templates/k8s-manifests.yaml.tmpl

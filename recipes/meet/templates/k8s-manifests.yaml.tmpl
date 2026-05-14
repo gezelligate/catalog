@@ -1,0 +1,223 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meet-backend
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: meet-backend
+  template:
+    metadata:
+      labels:
+        app: meet-backend
+    spec:
+      # Run Django migrations on every rollout. The lasuite/meet-backend
+      # image ships without a prebaked schema and the catalog did not
+      # bootstrap one — same trap docs hit (see commit 6ec297a). Django
+      # migrations are idempotent so re-running on every pod start is
+      # safe.
+      initContainers:
+        - name: migrate
+          image: lasuite/meet-backend:v1.14.0
+          command: ["python", "manage.py", "migrate", "--no-input"]
+          envFrom:
+            - secretRef:
+                name: meet-env
+          env:
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "{{form.subdomain}}.{{global.baseDomain}}"
+            - name: DJANGO_SETTINGS_MODULE
+              value: meet.settings
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: PYTHONPATH
+              value: /app
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: OIDC_RP_CLIENT_ID
+              value: meet
+            - name: OIDC_RP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: meet-env
+                  key: OIDC_CLIENT_SECRET
+      containers:
+        - name: backend
+          image: lasuite/meet-backend:v1.14.0
+          envFrom:
+            - secretRef:
+                name: meet-env
+          env:
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "{{form.subdomain}}.{{global.baseDomain}}"
+            - name: DJANGO_SETTINGS_MODULE
+              value: meet.settings
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: PYTHONPATH
+              value: /app
+            - name: MEET_BASE_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: REDIS_URL
+              value: "redis://{{redis.host}}:{{redis.port}}/1"
+            - name: OIDC_OP_AUTHORIZATION_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/auth"
+            - name: OIDC_OP_TOKEN_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/token"
+            - name: OIDC_OP_USER_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/userinfo"
+            - name: OIDC_OP_JWKS_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/certs"
+            - name: OIDC_OP_LOGOUT_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/logout"
+            - name: OIDC_RP_CLIENT_ID
+              value: meet
+            # Re-export the meet-env Secret's OIDC_CLIENT_SECRET under the
+            # exact name mozilla-django-oidc reads (OIDC_RP_CLIENT_SECRET).
+            # envFrom alone only exposes the literal key name; without this
+            # remap Meet sees an empty secret and Keycloak returns
+            # invalid_client_credentials at /api/v1.0/callback/. Same trap
+            # docs had — see commit 85f3f89.
+            - name: OIDC_RP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: meet-env
+                  key: OIDC_CLIENT_SECRET
+            - name: OIDC_RP_SIGN_ALGO
+              value: RS256
+            - name: OIDC_RP_SCOPES
+              value: "openid email"
+            - name: LOGIN_REDIRECT_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: LOGIN_REDIRECT_URL_FAILURE
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: LOGOUT_REDIRECT_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: OIDC_REDIRECT_ALLOWED_HOSTS
+              value: '["https://{{form.subdomain}}.{{global.baseDomain}}"]'
+            - name: LIVEKIT_API_KEY
+              value: livekit
+            - name: LIVEKIT_API_URL
+              value: "https://livekit.{{global.baseDomain}}"
+            - name: ALLOW_UNREGISTERED_ROOMS
+              value: "False"
+            - name: LIVEKIT_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-env
+                  key: API_SECRET
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meet-backend
+  namespace: gezelligate
+spec:
+  selector:
+    app: meet-backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meet-celery
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: meet-celery
+  template:
+    metadata:
+      labels:
+        app: meet-celery
+    spec:
+      containers:
+        - name: celery
+          image: lasuite/meet-backend:v1.14.0
+          args: ["celery", "-A", "meet.celery_app", "worker", "-l", "INFO"]
+          envFrom:
+            - secretRef:
+                name: meet-env
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: meet.settings
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: PYTHONPATH
+              value: /app
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: REDIS_URL
+              value: "redis://{{redis.host}}:{{redis.port}}/1"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meet-frontend
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: meet-frontend
+  template:
+    metadata:
+      labels:
+        app: meet-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: lasuite/meet-frontend:v1.14.0
+          env:
+            - name: MEET_HOST
+              value: "{{form.subdomain}}.{{global.baseDomain}}"
+            - name: BACKEND_INTERNAL_HOST
+              value: meet-backend
+            - name: LIVEKIT_HOST
+              value: "livekit.{{global.baseDomain}}"
+          ports:
+            # lasuite/meet-frontend's bundled nginx listens on 8080
+            # (see /etc/nginx/conf.d/*.conf inside the image). The
+            # service exposes 8083 externally to match the catalog's
+            # ingress port, but the targetPort below maps it back to
+            # 8080 inside the pod.
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meet
+  namespace: gezelligate
+spec:
+  selector:
+    app: meet-frontend
+  ports:
+    - port: 8083
+      targetPort: 8080

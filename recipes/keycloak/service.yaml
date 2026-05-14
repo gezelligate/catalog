@@ -1,0 +1,52 @@
+name: keycloak
+displayName: Keycloak
+description: Identity and SSO provider. Required by every other service in the stack.
+category: auth
+required: true
+kernel: true
+icon: keycloak.svg
+
+form:
+  - key: subdomain
+    label: Subdomain
+    type: string
+    default: auth
+    help: Will be served at <subdomain>.<your-domain> in public mode
+
+dependencies: []
+
+secrets:
+  - key: ADMIN_PASSWORD
+    generator: password
+    length: 32
+  - key: DB_PASSWORD
+    generator: password
+    length: 32
+
+database:
+  engine: postgres
+  preferShared: true
+  name: keycloak
+  user: keycloak
+
+provides:
+  userSeed:
+    passwordEnv: ADMIN_PASSWORD
+  oidcServer:
+    realmEnv: KEYCLOAK_REALM
+  ingress:
+    host: "{{form.subdomain}}.{{global.baseDomain}}"
+    port: 8080
+    # codecentric/keycloakx chart creates a Service named <release>-keycloakx-http
+    # (not just <release>). Release name = our service name ("keycloak").
+    k8s:
+      service: keycloak-keycloakx-http
+      port: 8080
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: codecentric/keycloakx
+    helmVersion: "3.0.0"
+    valuesTemplate: templates/helm-values.yaml.tmpl

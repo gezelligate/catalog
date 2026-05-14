@@ -1,0 +1,503 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docs-minio-data
+  namespace: gezelligate
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs-minio
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docs-minio
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: docs-minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+          args: ["server", "--console-address", ":9001", "/data"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: MINIO_ROOT_PASSWORD
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: docs-minio-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: docs-minio
+  namespace: gezelligate
+spec:
+  selector:
+    app: docs-minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+# One-shot bucket creation. The Job waits for minio to be ready then creates
+# the docs-media-storage bucket and enables versioning. Re-runs are idempotent
+# because `mc mb --ignore-existing` no-ops on existing buckets.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: docs-createbuckets
+  namespace: gezelligate
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until mc alias set s3 http://docs-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" 2>/dev/null; do
+                echo "waiting for docs-minio..."
+                sleep 2
+              done
+              mc mb --ignore-existing s3/docs-media-storage
+              mc version enable s3/docs-media-storage
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: MINIO_ROOT_PASSWORD
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs-backend
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docs-backend
+  template:
+    metadata:
+      labels:
+        app: docs-backend
+    spec:
+      # Run Django migrations on every rollout. Idempotent (Django no-ops if
+      # the schema is up to date), so safe to run on each pod start. Without
+      # this, every OIDC callback fails with `psycopg.errors.UndefinedTable:
+      # relation "impress_user" does not exist` because the image ships
+      # without prebaked schema.
+      initContainers:
+        - name: migrate
+          image: lasuite/impress-backend:v3.7.0
+          command: ["python", "manage.py", "migrate", "--no-input"]
+          envFrom:
+            - secretRef:
+                name: docs-env
+          env:
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: DJANGO_SETTINGS_MODULE
+              value: impress.settings
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "{{form.subdomain}}.{{global.baseDomain}}"
+            - name: PYTHONPATH
+              value: /app
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: OIDC_RP_CLIENT_ID
+              value: docs
+            - name: OIDC_RP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: OIDC_CLIENT_SECRET
+      containers:
+        - name: backend
+          image: lasuite/impress-backend:v3.7.0
+          envFrom:
+            - secretRef:
+                name: docs-env
+          env:
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: DJANGO_SETTINGS_MODULE
+              value: impress.settings
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "{{form.subdomain}}.{{global.baseDomain}}"
+            - name: PYTHONPATH
+              value: /app
+            - name: LOGGING_LEVEL_HANDLERS_CONSOLE
+              value: ERROR
+            - name: LOGGING_LEVEL_LOGGERS_ROOT
+              value: INFO
+            - name: LOGGING_LEVEL_LOGGERS_APP
+              value: INFO
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: REDIS_URL
+              value: "redis://{{redis.host}}:{{redis.port}}/3"
+            - name: AWS_S3_ENDPOINT_URL
+              value: "http://docs-minio:9000"
+            - name: AWS_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: MINIO_ROOT_USER
+            - name: AWS_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: MINIO_ROOT_PASSWORD
+            - name: AWS_STORAGE_BUCKET_NAME
+              value: docs-media-storage
+            - name: MEDIA_BASE_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: OIDC_OP_AUTHORIZATION_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/auth"
+            - name: OIDC_OP_LOGOUT_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/logout"
+            - name: OIDC_OP_TOKEN_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/token"
+            - name: OIDC_OP_USER_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/userinfo"
+            - name: OIDC_OP_JWKS_ENDPOINT
+              value: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/certs"
+            - name: OIDC_RP_CLIENT_ID
+              value: docs
+            # Re-export the docs-env Secret's OIDC_CLIENT_SECRET under the
+            # exact name mozilla-django-oidc reads (OIDC_RP_CLIENT_SECRET).
+            # envFrom alone only exposes the literal key name; without this
+            # remap Impress sees an empty secret and Keycloak returns
+            # invalid_client_credentials at /api/v1.0/callback/.
+            - name: OIDC_RP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: OIDC_CLIENT_SECRET
+            - name: OIDC_RP_SIGN_ALGO
+              value: RS256
+            - name: OIDC_RP_SCOPES
+              value: "openid email"
+            - name: LOGIN_REDIRECT_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: LOGIN_REDIRECT_URL_FAILURE
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: LOGOUT_REDIRECT_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: OIDC_REDIRECT_ALLOWED_HOSTS
+              value: '["https://{{form.subdomain}}.{{global.baseDomain}}"]'
+            - name: Y_PROVIDER_API_BASE_URL
+              value: "http://docs-y-provider:4444/api/"
+            - name: COLLABORATION_API_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}/collaboration/api/"
+            - name: COLLABORATION_BACKEND_BASE_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: COLLABORATION_SERVER_ORIGIN
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: DJANGO_EMAIL_BRAND_NAME
+              value: "Docs"
+            - name: DJANGO_EMAIL_URL_APP
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: docs-backend
+  namespace: gezelligate
+spec:
+  selector:
+    app: docs-backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs-celery
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docs-celery
+  template:
+    metadata:
+      labels:
+        app: docs-celery
+    spec:
+      containers:
+        - name: celery
+          image: lasuite/impress-backend:v3.7.0
+          args: ["celery", "-A", "impress.celery_app", "worker", "-l", "INFO"]
+          envFrom:
+            - secretRef:
+                name: docs-env
+          env:
+            - name: DJANGO_CONFIGURATION
+              value: Production
+            - name: DJANGO_SETTINGS_MODULE
+              value: impress.settings
+            - name: PYTHONPATH
+              value: /app
+            - name: DB_HOST
+              value: {{db.host}}
+            - name: DB_PORT
+              value: "{{db.port}}"
+            - name: DB_NAME
+              value: {{db.name}}
+            - name: DB_USER
+              value: {{db.user}}
+            - name: REDIS_URL
+              value: "redis://{{redis.host}}:{{redis.port}}/3"
+            - name: AWS_S3_ENDPOINT_URL
+              value: "http://docs-minio:9000"
+            - name: AWS_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: MINIO_ROOT_USER
+            - name: AWS_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: docs-env
+                  key: MINIO_ROOT_PASSWORD
+            - name: AWS_STORAGE_BUCKET_NAME
+              value: docs-media-storage
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs-y-provider
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docs-y-provider
+  template:
+    metadata:
+      labels:
+        app: docs-y-provider
+    spec:
+      containers:
+        - name: y-provider
+          image: lasuite/impress-y-provider:v3.7.0
+          envFrom:
+            - secretRef:
+                name: docs-env
+          env:
+            - name: COLLABORATION_SERVER_ORIGIN
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: COLLABORATION_API_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}/collaboration/api/"
+            - name: COLLABORATION_BACKEND_BASE_URL
+              value: "https://{{form.subdomain}}.{{global.baseDomain}}"
+            - name: COLLABORATION_LOGGING
+              value: "true"
+          ports:
+            - containerPort: 4444
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: docs-y-provider
+  namespace: gezelligate
+spec:
+  selector:
+    app: docs-y-provider
+  ports:
+    - port: 4444
+      targetPort: 4444
+---
+# Public-facing nginx ingress. Routes /api → backend, /collaboration → y-provider,
+# /media → minio (with auth_request through backend), everything else → frontend.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docs-ingress-nginx
+  namespace: gezelligate
+data:
+  docs-ingress.conf: |
+    upstream docs_backend {
+        server docs-backend:8000 fail_timeout=0;
+    }
+    upstream docs_frontend {
+        server 127.0.0.1:3000 fail_timeout=0;
+    }
+    upstream docs_yprovider {
+        server docs-y-provider:4444 fail_timeout=0;
+    }
+
+    server {
+        listen 8083;
+        server_name _;
+        charset utf-8;
+        client_max_body_size 100m;
+        server_tokens off;
+
+        location @proxy_to_backend {
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+            proxy_redirect off;
+            proxy_pass http://docs_backend;
+        }
+        location @proxy_to_frontend {
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+            proxy_redirect off;
+            proxy_pass http://docs_frontend;
+        }
+
+        location / { try_files $uri @proxy_to_frontend; }
+        location /api { try_files $uri @proxy_to_backend; }
+        location /admin { try_files $uri @proxy_to_backend; }
+        location /external_api { try_files $uri @proxy_to_backend; }
+        location /static { try_files $uri @proxy_to_backend; }
+
+        location /collaboration/ws/ {
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "Upgrade";
+            proxy_pass http://docs_yprovider;
+            proxy_read_timeout 86400;
+            proxy_send_timeout 86400;
+            proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+            proxy_set_header Origin $http_origin;
+            proxy_set_header Host $host;
+        }
+        location /collaboration/api/ {
+            proxy_pass http://docs_yprovider;
+            proxy_set_header Host $host;
+        }
+
+        location /media/ {
+            auth_request /media-auth;
+            auth_request_set $authHeader $upstream_http_authorization;
+            auth_request_set $authDate $upstream_http_x_amz_date;
+            auth_request_set $authContentSha256 $upstream_http_x_amz_content_sha256;
+
+            proxy_set_header Authorization $authHeader;
+            proxy_set_header X-Amz-Date $authDate;
+            proxy_set_header X-Amz-Content-SHA256 $authContentSha256;
+
+            proxy_pass http://docs-minio:9000/docs-media-storage/;
+            proxy_set_header Host docs-minio:9000;
+
+            add_header Content-Security-Policy "default-src 'none'" always;
+        }
+
+        location /media-auth {
+            proxy_pass http://docs_backend/api/v1.0/documents/media-auth/;
+            proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Original-URL $request_uri;
+
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Original-Method $request_method;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs
+  namespace: gezelligate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docs
+  template:
+    metadata:
+      labels:
+        app: docs
+    spec:
+      containers:
+        - name: frontend
+          image: lasuite/impress-frontend:v3.7.0
+          ports:
+            - containerPort: 8083
+            - containerPort: 3000
+          volumeMounts:
+            - name: ingress-conf
+              mountPath: /etc/nginx/conf.d/docs-ingress.conf
+              subPath: docs-ingress.conf
+              readOnly: true
+      volumes:
+        - name: ingress-conf
+          configMap:
+            name: docs-ingress-nginx
+            items:
+              - key: docs-ingress.conf
+                path: docs-ingress.conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: docs
+  namespace: gezelligate
+spec:
+  selector:
+    app: docs
+  ports:
+    - port: 8083
+      targetPort: 8083

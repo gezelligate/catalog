@@ -1,0 +1,31 @@
+name: livekit
+displayName: LiveKit Media Server
+description: WebRTC SFU used by Meet for video and audio. Auto-included whenever Meet is enabled. Never shown in the wizard.
+category: infrastructure
+required: false
+hidden: true
+
+form: []
+
+dependencies: []
+
+secrets:
+  - key: API_SECRET
+    generator: hex
+    length: 48
+
+redis:
+  preferShared: true
+
+provides:
+  ingress:
+    host: "livekit.{{global.baseDomain}}"
+    port: 7880
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: __inline__
+    helmVersion: "inline"
+    valuesTemplate: templates/k8s-manifests.yaml.tmpl

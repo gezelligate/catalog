@@ -1,0 +1,43 @@
+name: scaleway
+displayName: Scaleway Kapsule
+description: Managed Kubernetes on Scaleway (fr-par, nl-ams, pl-waw).
+kind: cluster
+
+geographies:
+  - { id: fr-par, label: "Paris, France (fr-par)" }
+  - { id: nl-ams, label: "Amsterdam, Netherlands (nl-ams)" }
+  - { id: pl-waw, label: "Warsaw, Poland (pl-waw)" }
+
+controlPlane: { mode: managed, typeId: kapsule }
+
+nodeTypes:
+  - { id: DEV1-M }
+  - { id: DEV1-L }
+  - { id: PLAY2-NANO }
+  - { id: PLAY2-MICRO }
+  - { id: PLAY2-PICO }
+  - { id: PRO2-XXS }
+  - { id: PRO2-XS }
+
+credentials:
+  - { key: accessKey, label: "Access key",   type: string, required: true }
+  - { key: secretKey, label: "Secret key",   type: string, required: true }
+  - { key: projectId, label: "Project ID",   type: string, required: true }
+
+presets:
+  - { key: trial,  label: "Just trying it out", hint: "1–5 people",    nodePoolType: PLAY2-MICRO, nodeCount: 2 }
+  - { key: small,  label: "Small team",         hint: "6–20 people",   nodePoolType: PLAY2-MICRO, nodeCount: 3 }
+  - { key: medium, label: "Medium team",        hint: "21–75 people",  nodePoolType: PRO2-XS,     nodeCount: 3 }
+  - { key: large,  label: "Large team",         hint: "76–200 people", nodePoolType: PRO2-XS,     nodeCount: 5 }
+
+templates:
+  - templates/main.tf.tmpl
+  - templates/variables.tf.tmpl
+  - templates/outputs.tf.tmpl
+
+capabilities:
+  hasLoadBalancerIp: false
+  supportsResourceList: false
+
+docs:
+  credentials: https://www.scaleway.com/en/docs/iam/how-to/create-api-keys/

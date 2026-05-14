@@ -1,0 +1,85 @@
+# Auto-generated from gezelligate. Regenerated on every render.
+replicaCount: 1
+
+image:
+  repository: mattermost/mattermost-team-edition
+  tag: "release-10.4"
+
+# Expose via Traefik IngressRoute (emitted separately); disable the chart's ingress.
+ingress:
+  enabled: false
+
+service:
+  type: ClusterIP
+  internalPort: 8065
+  externalPort: 8065
+
+# Browser-facing URL uses the public hostname. Server→server OIDC calls use
+# the in-cluster Keycloak Service name (`keycloak-keycloakx-http`, created by
+# the codecentric/keycloakx chart — not the release name).
+#
+# Chart key is `extraEnvVars` (NOT `extraEnv`), and the chart's pod spec does
+# not mount arbitrary `envFrom` sources — so OIDC_CLIENT_SECRET can't be
+# referenced by `$(VAR)` substitution and must be baked in at render time via
+# `{{env.OIDC_CLIENT_SECRET}}`.
+extraEnvVars:
+  - name: MM_SERVICESETTINGS_SITEURL
+    value: "{{#if (eq global.mode "local")}}http://localhost:8065{{else}}https://{{form.subdomain}}.{{global.baseDomain}}{{/if}}"
+  - name: TZ
+    value: "{{global.timezone}}"
+  - name: MM_GITLABSETTINGS_ENABLE
+    value: "true"
+  - name: MM_GITLABSETTINGS_ID
+    value: mattermost
+  - name: MM_GITLABSETTINGS_SECRET
+    value: "{{env.OIDC_CLIENT_SECRET}}"
+  - name: MM_GITLABSETTINGS_AUTHENDPOINT
+    value: "{{#if (eq global.mode "local")}}http://localhost:8080{{else}}https://auth.{{global.baseDomain}}{{/if}}/realms/gezelligate/protocol/openid-connect/auth"
+  - name: MM_GITLABSETTINGS_TOKENENDPOINT
+    value: "http://keycloak-keycloakx-http:8080/realms/gezelligate/protocol/openid-connect/token"
+  - name: MM_GITLABSETTINGS_USERAPIENDPOINT
+    value: "http://keycloak-keycloakx-http:8080/realms/gezelligate/protocol/openid-connect/userinfo"
+  - name: MM_GITLABSETTINGS_DISCOVERYENDPOINT
+    value: "http://keycloak-keycloakx-http:8080/realms/gezelligate/.well-known/openid-configuration"
+  - name: MM_GITLABSETTINGS_SCOPE
+    # Mattermost Team Edition refuses to serve /oauth/gitlab/* when the
+    # configured GitLab scope contains "openid" — it returns 501 "Gitlab
+    # SSO through OAuth 2.0 not available on this server" because that
+    # path is reserved for the enterprise-only OpenID provider.
+    # Instead, we inject openid into the access-token's `scope` claim
+    # server-side via a hardcoded-claim protocol mapper on the
+    # mattermost Keycloak client (see run/src/renderer/keycloak.ts) —
+    # that satisfies Keycloak's /userinfo check without changing what
+    # Mattermost asks the IdP for.
+    value: "profile email"
+  - name: MM_TEAMSETTINGS_ENABLEUSERCREATION
+    value: "true"
+
+# DB is provided by the shared `postgres` StatefulSet emitted inline by the
+# k8s renderer (see repository/postgres/). Chart's bundled MySQL is disabled;
+# we wire the chart's externalDB knob to the `postgres` ClusterIP Service.
+#
+# The chart builds the datasource as `{externalDriverType}://{externalConnectionString}`
+# (see templates/secret-mattermost-dbsecret.yaml in the chart) — so the
+# connection string MUST NOT include a leading `postgres://` or we get a
+# double-prefix and Mattermost silently falls back to its built-in default
+# host `postgres`, yielding `lookup postgres: no such host`.
+#
+# DB_PASSWORD is baked at render time via `{{env.DB_PASSWORD}}` because the
+# chart hands this string to Mattermost via a Secret (no `$(VAR)` env-var
+# expansion happens inside Secret values).
+mysql:
+  enabled: false
+
+externalDB:
+  enabled: true
+  externalDriverType: postgres
+  externalConnectionString: "{{db.user}}:{{env.DB_PASSWORD}}@{{db.host}}:{{db.port}}/{{db.name}}?sslmode=disable&connect_timeout=10"
+
+persistence:
+  data:
+    enabled: true
+    size: 10Gi
+  plugins:
+    enabled: true
+    size: 1Gi

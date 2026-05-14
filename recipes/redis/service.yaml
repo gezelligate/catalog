@@ -1,0 +1,23 @@
+name: redis
+displayName: Shared Redis
+description: Single Redis instance shared by all services that declare redis.shared. Auto-included — never shown in the wizard.
+category: infrastructure
+required: false
+hidden: true
+
+form: []
+
+dependencies: []
+
+secrets: []
+
+provides:
+  sharedRedis: {}
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: __inline__
+    helmVersion: "inline"
+    valuesTemplate: templates/k8s-manifests.yaml.tmpl

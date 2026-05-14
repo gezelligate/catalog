@@ -1,0 +1,27 @@
+name: postgres
+displayName: Shared PostgreSQL
+description: Single Postgres instance shared by all services that declare database.shared. Auto-included — never shown in the wizard.
+category: infrastructure
+required: false
+hidden: true
+
+form: []
+
+dependencies: []
+
+secrets:
+  - key: POSTGRES_PASSWORD
+    generator: password
+    length: 48
+
+provides:
+  sharedDatabase:
+    engine: postgres
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: __inline__
+    helmVersion: "inline"
+    valuesTemplate: templates/k8s-manifests.yaml.tmpl

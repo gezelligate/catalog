@@ -1,0 +1,24 @@
+  bridge:
+    build:
+      context: ../../bridge
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - keycloak
+      - {{db.host}}
+    environment:
+      NODE_ENV: production
+      PORT: "8090"
+      DATABASE_URL: "postgres://{{db.user}}:${BRIDGE_DB_PASSWORD}@{{db.host}}:{{db.port}}/{{db.name}}"
+      OIDC_ISSUER: "{{#if (eq global.mode "local")}}http://localhost:8080{{else}}https://auth.{{global.baseDomain}}{{/if}}/realms/gezelligate"
+      OIDC_CLIENT_ID: bridge
+      OIDC_CLIENT_SECRET: "${BRIDGE_OIDC_CLIENT_SECRET}"
+      OIDC_REDIRECT_URI: "{{#if (eq global.mode "local")}}http://localhost:8090/auth/callback{{else}}https://{{global.baseDomain}}/auth/callback{{/if}}"
+      SESSION_SECRET: "${BRIDGE_SESSION_SECRET}"
+      BRIDGE_MANIFEST_PATH: /app/manifest/bridge-manifest.json
+      PUBLIC_BASE_URL: "{{#if (eq global.mode "local")}}http://localhost:8090{{else}}https://{{global.baseDomain}}{{/if}}"
+    volumes:
+      - ./bridge-manifest.json:/app/manifest/bridge-manifest.json:ro
+      - ./bridge-icons:/app/icons:ro
+    ports:
+      - "8090:8090"

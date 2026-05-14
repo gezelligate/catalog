@@ -1,0 +1,86 @@
+name: meet
+displayName: Meet (video conferencing)
+description: La Suite Meet — open-source video conferencing built on LiveKit. Replaces Jitsi.
+category: communication
+required: false
+icon: meet.svg
+
+form:
+  - key: subdomain
+    label: Subdomain
+    type: string
+    default: meet
+    help: Will be served at <subdomain>.<your-domain> in public mode.
+
+dependencies:
+  - service: keycloak
+    reason: SSO for users joining meetings
+    required: true
+  - service: livekit
+    reason: WebRTC media server that Meet's backend signs tokens for
+    required: true
+
+secrets:
+  - key: DJANGO_SECRET_KEY
+    generator: hex
+    length: 64
+  - key: DB_PASSWORD
+    generator: password
+    length: 32
+  - key: OIDC_CLIENT_SECRET
+    generator: password
+    length: 48
+
+database:
+  engine: postgres
+  preferShared: true
+  name: meet
+  user: meet
+
+redis:
+  preferShared: true
+
+provides:
+  oidcClient:
+    clientId: meet
+    redirectUris:
+      - "https://{{form.subdomain}}.{{global.baseDomain}}/*"
+    scopes: [openid, email]
+  ingress:
+    host: "{{form.subdomain}}.{{global.baseDomain}}"
+    port: 8083
+    # The Meet SPA (meet-frontend nginx) serves only static assets;
+    # Django API + admin + OIDC live in meet-backend. Split traffic at
+    # the IngressRoute so /api etc. doesn't fall through to the SPA's
+    # index.html catch-all (which returns HTTP 200 + HTML and makes the
+    # frontend hang on JSON parse errors during boot).
+    k8s:
+      pathOverrides:
+        - prefix: "/api/"
+          service: meet-backend
+          port: 8000
+        - prefix: "/admin/"
+          service: meet-backend
+          port: 8000
+        - prefix: "/static/"
+          service: meet-backend
+          port: 8000
+        - prefix: "/resource/"
+          service: meet-backend
+          port: 8000
+        - prefix: "/oidc/"
+          service: meet-backend
+          port: 8000
+  bridge:
+    tile:
+      name: "Meet"
+      icon: "/icons/meet.svg"
+      url: "https://{{form.subdomain}}.{{global.baseDomain}}"
+
+targets:
+  docker:
+    template: templates/docker-compose.yml.tmpl
+  kubernetes:
+    helmChart: __inline__
+    helmVersion: "inline"
+    valuesTemplate: templates/k8s-manifests.yaml.tmpl

@@ -1,0 +1,64 @@
+  meet-backend:
+    image: lasuite/meet-backend:v1.14.0
+    restart: unless-stopped
+    depends_on:
+      - {{db.host}}
+      - {{redis.host}}
+      - livekit
+    environment:
+      DJANGO_ALLOWED_HOSTS: "{{form.subdomain}}.{{global.baseDomain}}"
+      DJANGO_SECRET_KEY: ${MEET_DJANGO_SECRET_KEY}
+      DJANGO_SETTINGS_MODULE: meet.settings
+      DJANGO_CONFIGURATION: Production
+      PYTHONPATH: /app
+      MEET_BASE_URL: "https://{{form.subdomain}}.{{global.baseDomain}}"
+      DB_HOST: {{db.host}}
+      DB_PORT: "{{db.port}}"
+      DB_NAME: {{db.name}}
+      DB_USER: {{db.user}}
+      DB_PASSWORD: ${MEET_DB_PASSWORD}
+      REDIS_URL: redis://{{redis.host}}:{{redis.port}}/1
+      OIDC_OP_AUTHORIZATION_ENDPOINT: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/auth"
+      OIDC_OP_TOKEN_ENDPOINT: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/token"
+      OIDC_OP_USER_ENDPOINT: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/userinfo"
+      OIDC_OP_JWKS_ENDPOINT: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/certs"
+      OIDC_OP_LOGOUT_ENDPOINT: "https://auth.{{global.baseDomain}}/realms/gezelligate/protocol/openid-connect/logout"
+      OIDC_RP_CLIENT_ID: meet
+      OIDC_RP_CLIENT_SECRET: ${MEET_OIDC_CLIENT_SECRET}
+      OIDC_RP_SIGN_ALGO: RS256
+      OIDC_RP_SCOPES: "openid email"
+      LOGIN_REDIRECT_URL: "https://{{form.subdomain}}.{{global.baseDomain}}"
+      LOGIN_REDIRECT_URL_FAILURE: "https://{{form.subdomain}}.{{global.baseDomain}}"
+      LOGOUT_REDIRECT_URL: "https://{{form.subdomain}}.{{global.baseDomain}}"
+      OIDC_REDIRECT_ALLOWED_HOSTS: '["https://{{form.subdomain}}.{{global.baseDomain}}"]'
+      LIVEKIT_API_KEY: livekit
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_API_URL: "https://livekit.{{global.baseDomain}}"
+      ALLOW_UNREGISTERED_ROOMS: "False"
+
+  meet-celery:
+    image: lasuite/meet-backend:v1.14.0
+    restart: unless-stopped
+    command: ["celery", "-A", "meet.celery_app", "worker", "-l", "INFO"]
+    depends_on:
+      - meet-backend
+    environment:
+      DJANGO_SETTINGS_MODULE: meet.settings
+      DJANGO_CONFIGURATION: Production
+      PYTHONPATH: /app
+      DB_HOST: {{db.host}}
+      DB_PORT: "{{db.port}}"
+      DB_NAME: {{db.name}}
+      DB_USER: {{db.user}}
+      DB_PASSWORD: ${MEET_DB_PASSWORD}
+      REDIS_URL: redis://{{redis.host}}:{{redis.port}}/1
+
+  meet-frontend:
+    image: lasuite/meet-frontend:v1.14.0
+    restart: unless-stopped
+    depends_on:
+      - meet-backend
+    environment:
+      MEET_HOST: "{{form.subdomain}}.{{global.baseDomain}}"
+      BACKEND_INTERNAL_HOST: meet-backend
+      LIVEKIT_HOST: "livekit.{{global.baseDomain}}"

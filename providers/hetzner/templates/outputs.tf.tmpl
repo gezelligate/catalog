@@ -1,0 +1,17 @@
+output "control_plane_ip" {
+  value = hcloud_server.control_plane.ipv4_address
+}
+
+output "worker_ips" {
+  value = hcloud_server.worker[*].ipv4_address
+}
+
+output "location" {
+  value = var.location
+}
+
+# The kubeconfig is written by the null_resource provisioner to
+# ${path.module}/kubeconfig.yaml. The deploy CLI picks it up from there.
+output "kubeconfig_path" {
+  value = "${path.module}/kubeconfig.yaml"
+}
