@@ -1,9 +1,9 @@
+schemaVersion: 1
 name: drive
 displayName: Drive
 description: La Suite Drive — file storage, sharing, and organization with team workspaces. Maintained by France's DINUM.
 category: productivity
 required: false
-icon: drive.svg
 
 form:
   - key: subdomain

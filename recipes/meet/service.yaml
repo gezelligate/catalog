@@ -1,9 +1,9 @@
+schemaVersion: 1
 name: meet
 displayName: Meet (video conferencing)
 description: La Suite Meet — open-source video conferencing built on LiveKit. Replaces Jitsi.
 category: communication
 required: false
-icon: meet.svg
 
 form:
   - key: subdomain

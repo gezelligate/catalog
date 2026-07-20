@@ -18,10 +18,11 @@ service:
 # the in-cluster Keycloak Service name (`keycloak-keycloakx-http`, created by
 # the codecentric/keycloakx chart — not the release name).
 #
-# Chart key is `extraEnvVars` (NOT `extraEnv`), and the chart's pod spec does
-# not mount arbitrary `envFrom` sources — so OIDC_CLIENT_SECRET can't be
-# referenced by `$(VAR)` substitution and must be baked in at render time via
-# `{{env.OIDC_CLIENT_SECRET}}`.
+# Chart key is `extraEnvVars` (NOT `extraEnv`). The chart passes entries
+# through verbatim (`toYaml`), so the OIDC client secret is referenced from
+# the `mattermost-env` Secret the engine emits (applied by kustomize before
+# this release) instead of being baked into this file in plaintext
+# (audit 6.7). Verified against chart 6.6.56 templates/deployment.yaml.
 extraEnvVars:
   - name: MM_SERVICESETTINGS_SITEURL
     value: "{{#if (eq global.mode "local")}}http://localhost:8065{{else}}https://{{form.subdomain}}.{{global.baseDomain}}{{/if}}"
@@ -32,7 +33,10 @@ extraEnvVars:
   - name: MM_GITLABSETTINGS_ID
     value: mattermost
   - name: MM_GITLABSETTINGS_SECRET
-    value: "{{env.OIDC_CLIENT_SECRET}}"
+    valueFrom:
+      secretKeyRef:
+        name: mattermost-env
+        key: OIDC_CLIENT_SECRET
   - name: MM_GITLABSETTINGS_AUTHENDPOINT
     value: "{{#if (eq global.mode "local")}}http://localhost:8080{{else}}https://auth.{{global.baseDomain}}{{/if}}/realms/gezelligate/protocol/openid-connect/auth"
   - name: MM_GITLABSETTINGS_TOKENENDPOINT
@@ -68,6 +72,9 @@ extraEnvVars:
 # DB_PASSWORD is baked at render time via `{{env.DB_PASSWORD}}` because the
 # chart hands this string to Mattermost via a Secret (no `$(VAR)` env-var
 # expansion happens inside Secret values).
+# Chart 6.6.56 offers no existingSecret knob for this connection string, so
+# the password stays in this rendered file; the engine writes rendered helm
+# values owner-only (0600) to compensate (audit 6.7).
 mysql:
   enabled: false
 

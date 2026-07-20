@@ -35,10 +35,14 @@
     image: lasuite/drive-backend:v0.10.0
     restart: unless-stopped
     depends_on:
-      - {{db.host}}
-      - {{redis.host}}
-      - drive-createbuckets
-      - keycloak
+      {{db.host}}:
+        condition: service_healthy
+      {{redis.host}}:
+        condition: service_healthy
+      drive-createbuckets:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_started
     environment:
       DJANGO_CONFIGURATION: Production
       DJANGO_SETTINGS_MODULE: drive.settings

@@ -1,9 +1,9 @@
+schemaVersion: 1
 name: mattermost
 displayName: Mattermost
 description: Self-hosted team chat with channels, threads, and integrations. Logs in with your Keycloak account.
 category: communication
 required: false
-icon: mattermost.svg
 
 form:
   - key: subdomain
@@ -32,6 +32,10 @@ database:
   user: mattermost
 
 provides:
+  # The bridge launcher can share items INTO this service (audit 5.5 — the
+  # engine finds share targets by this capability, never by service name).
+  bridgeShare:
+    protocol: mattermost
   oidcClient:
     clientId: mattermost
     redirectUris:
@@ -86,5 +90,6 @@ targets:
     template: templates/docker-compose.yml.tmpl
   kubernetes:
     helmChart: mattermost/mattermost-team-edition
+    helmRepo: https://helm.mattermost.com
     helmVersion: "6.6.56"
     valuesTemplate: templates/helm-values.yaml.tmpl

@@ -36,10 +36,14 @@
     image: lasuite/impress-backend:v3.7.0
     restart: unless-stopped
     depends_on:
-      - {{db.host}}
-      - {{redis.host}}
-      - docs-createbuckets
-      - keycloak
+      {{db.host}}:
+        condition: service_healthy
+      {{redis.host}}:
+        condition: service_healthy
+      docs-createbuckets:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_started
     environment:
       DJANGO_CONFIGURATION: Production
       DJANGO_SETTINGS_MODULE: impress.settings

@@ -1,4 +1,5 @@
 {
+  "contractVersion": 1,
   "recipes": [
     {
       "name": "bridge",
@@ -11,14 +12,14 @@
       "name": "docs",
       "displayName": "Docs",
       "category": "productivity",
-      "description": "La Suite Docs — collaborative wiki and documentation platform with real-time editing. Maintained by France's DINUM.",
+      "description": "La Suite Docs \u2014 collaborative wiki and documentation platform with real-time editing. Maintained by France's DINUM.",
       "required": false
     },
     {
       "name": "drive",
       "displayName": "Drive",
       "category": "productivity",
-      "description": "La Suite Drive — file storage, sharing, and organization with team workspaces. Maintained by France's DINUM.",
+      "description": "La Suite Drive \u2014 file storage, sharing, and organization with team workspaces. Maintained by France's DINUM.",
       "required": false
     },
     {
@@ -47,14 +48,14 @@
       "name": "meet",
       "displayName": "Meet (video conferencing)",
       "category": "communication",
-      "description": "La Suite Meet — open-source video conferencing built on LiveKit. Replaces Jitsi.",
+      "description": "La Suite Meet \u2014 open-source video conferencing built on LiveKit. Replaces Jitsi.",
       "required": false
     },
     {
       "name": "postgres",
       "displayName": "Shared PostgreSQL",
       "category": "infrastructure",
-      "description": "Single Postgres instance shared by all services that declare database.shared. Auto-included — never shown in the wizard.",
+      "description": "Single Postgres instance shared by all services that declare database.shared. Auto-included \u2014 never shown in the wizard.",
       "required": false,
       "hidden": true
     },
@@ -62,7 +63,7 @@
       "name": "redis",
       "displayName": "Shared Redis",
       "category": "infrastructure",
-      "description": "Single Redis instance shared by all services that declare redis.shared. Auto-included — never shown in the wizard.",
+      "description": "Single Redis instance shared by all services that declare redis.shared. Auto-included \u2014 never shown in the wizard.",
       "required": false,
       "hidden": true
     }

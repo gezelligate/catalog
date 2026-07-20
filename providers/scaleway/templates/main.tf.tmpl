@@ -14,11 +14,22 @@ provider "scaleway" {
   project_id = var.project_id
 }
 
+# Scaleway now requires a private network for every new Kapsule cluster; the
+# create call is rejected without one. gezelligate provisions a dedicated
+# network so deploys don't fail at apply (audit finding 2.4).
+resource "scaleway_vpc_private_network" "this" {
+  name = "gezelligate"
+}
+
 resource "scaleway_k8s_cluster" "this" {
   name    = "gezelligate"
-  version = "1.30"
+  # Resolved to the newest supported Kapsule version at deploy time (see the
+  # provider lifecycle); the default is only a fallback. A hardcoded version
+  # would be rejected once Scaleway rotates it out of support.
+  version = var.k8s_version
   cni     = "cilium"
   type = "{{form.controlPlaneType}}"
+  private_network_id = scaleway_vpc_private_network.this.id
   delete_additional_resources = true
 }
 

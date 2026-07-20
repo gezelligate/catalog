@@ -27,7 +27,14 @@ interface ProviderMeta {
   displayName: string;
 }
 
+// Engine-contract version this catalog release targets (audit 5.1). Engines
+// refuse a catalog with a contractVersion newer than they understand instead
+// of failing on unrecognized schema fields. Bump ONLY alongside a breaking
+// service.yaml / provider.yaml schema change.
+const CONTRACT_VERSION = 1;
+
 interface CatalogIndex {
+  contractVersion: number;
   recipes: RecipeMeta[];
   providers: ProviderMeta[];
   ref: string;
@@ -110,6 +117,7 @@ async function main(): Promise<void> {
   const recipes = await collectRecipes();
   const providers = await collectProviders();
   const index: CatalogIndex = {
+    contractVersion: CONTRACT_VERSION,
     recipes,
     providers,
     ref: readGitRef(),

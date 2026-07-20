@@ -1,3 +1,4 @@
+schemaVersion: 1
 name: bridge
 displayName: Launcher
 description: Apex-domain launcher with tiles, activity badges, and recent items across your stack.

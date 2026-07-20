@@ -4,8 +4,10 @@
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      - keycloak
-      - {{db.host}}
+      keycloak:
+        condition: service_started
+      {{db.host}}:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: "8090"

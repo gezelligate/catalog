@@ -18,6 +18,20 @@ spec:
           image: ghcr.io/spatialexplorers/bridge:latest
           ports:
             - containerPort: 8090
+          readinessProbe:
+            tcpSocket:
+              port: 8090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8090
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
           # envFrom is processed FIRST so DB_PASSWORD (and friends) are
           # in the env. The DATABASE_URL below uses $(DB_PASSWORD)
           # which Kubernetes only expands when the referenced var is defined
