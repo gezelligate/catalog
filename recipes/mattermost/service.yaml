@@ -4,7 +4,6 @@ displayName: Mattermost
 description: Self-hosted team chat with channels, threads, and integrations. Logs in with your Keycloak account.
 category: communication
 required: false
-icon: mattermost.svg
 
 form:
   - key: subdomain

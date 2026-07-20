@@ -5,7 +5,6 @@ description: Identity and SSO provider. Required by every other service in the s
 category: auth
 required: true
 kernel: true
-icon: keycloak.svg
 
 form:
   - key: subdomain

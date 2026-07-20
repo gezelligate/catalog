@@ -4,7 +4,6 @@ displayName: Docs
 description: La Suite Docs — collaborative wiki and documentation platform with real-time editing. Maintained by France's DINUM.
 category: productivity
 required: false
-icon: docs.svg
 
 form:
   - key: subdomain
