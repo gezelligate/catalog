@@ -33,6 +33,10 @@ database:
   user: mattermost
 
 provides:
+  # The bridge launcher can share items INTO this service (audit 5.5 — the
+  # engine finds share targets by this capability, never by service name).
+  bridgeShare:
+    protocol: mattermost
   oidcClient:
     clientId: mattermost
     redirectUris:
