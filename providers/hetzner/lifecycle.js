@@ -8,13 +8,28 @@ function apiToken(cluster) {
         throw new Error("Hetzner cluster config is missing credentials.apiToken");
     return t;
 }
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+}
 async function hcloudGet(token, p) {
-    const res = await fetchWithTimeout(`${HETZNER_API}${p}`, {
-        headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok)
+    // adoptOrphans issues ~24 sequential calls per run; Hetzner rate-limits at
+    // ~1 req/s per project. Retry transient 429/5xx with backoff so a partial-
+    // failure retry (the scenario adoptOrphans exists to serve) isn't killed by
+    // a rate limit (audit finding 2.7).
+    const maxAttempts = 4;
+    for (let attempt = 1;; attempt += 1) {
+        const res = await fetchWithTimeout(`${HETZNER_API}${p}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok)
+            return (await res.json());
+        if (RETRYABLE_STATUS.has(res.status) && attempt < maxAttempts) {
+            await sleep(1000 * attempt);
+            continue;
+        }
         throw new Error(`Hetzner API ${p} returned ${res.status}`);
-    return (await res.json());
+    }
 }
 async function hcloudJson(token, segment, init) {
     const res = await fetchWithTimeout(`${HETZNER_API}${segment}`, {
@@ -116,13 +131,31 @@ async function adoptOrphans(tofuDir, token, ctx) {
             return [];
         }
     }
+    // `tofu import` fails hard if the resource is already in state. Since
+    // stateList() falls back to [] on any error (e.g. a transient state-lock),
+    // a resource can look untracked when it isn't; importing it would then abort
+    // the whole deploy. Tolerate the "already managed" case so the run stays
+    // idempotent across partial-failure retries (audit finding 2.7).
+    async function importResource(addr, id) {
+        try {
+            await ctx.run("tofu", ["import", addr, id], tofuDir, env);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/already managed|Resource already/i.test(msg)) {
+                console.log(`    ${addr} already in state; skipping import`);
+                return;
+            }
+            throw err;
+        }
+    }
     const tracked = new Set(await stateList());
     if (!tracked.has("hcloud_ssh_key.gezelligate")) {
         const keys = await hcloudGet(token, "/ssh_keys?name=gezelligate");
         if (keys.ssh_keys.length > 0) {
             const id = keys.ssh_keys[0].id;
             console.log(`==> adopting orphaned hcloud_ssh_key.gezelligate (id=${id}) into state`);
-            await ctx.run("tofu", ["import", "hcloud_ssh_key.gezelligate", String(id)], tofuDir, env);
+            await importResource("hcloud_ssh_key.gezelligate", String(id));
         }
     }
     if (!tracked.has("hcloud_network.gezelligate")) {
@@ -130,7 +163,7 @@ async function adoptOrphans(tofuDir, token, ctx) {
         if (nets.networks.length > 0) {
             const id = nets.networks[0].id;
             console.log(`==> adopting orphaned hcloud_network.gezelligate (id=${id}) into state`);
-            await ctx.run("tofu", ["import", "hcloud_network.gezelligate", String(id)], tofuDir, env);
+            await importResource("hcloud_network.gezelligate", String(id));
             if (!tracked.has("hcloud_network_subnet.nodes")) {
                 const addr = `${id}-10.0.1.0/24`;
                 console.log(`==> adopting orphaned hcloud_network_subnet.nodes (${addr}) into state`);
@@ -146,7 +179,7 @@ async function adoptOrphans(tofuDir, token, ctx) {
     if (servers.servers.length > 0 && !tracked.has("hcloud_server.control_plane")) {
         const id = servers.servers[0].id;
         console.log(`==> adopting orphaned hcloud_server.control_plane (id=${id}) into state`);
-        await ctx.run("tofu", ["import", "hcloud_server.control_plane", String(id)], tofuDir, env);
+        await importResource("hcloud_server.control_plane", String(id));
     }
     for (let i = 0; i < 20; i += 1) {
         const name = `gezelligate-worker-${i + 1}`;
@@ -158,7 +191,7 @@ async function adoptOrphans(tofuDir, token, ctx) {
             break;
         const id = w.servers[0].id;
         console.log(`==> adopting orphaned ${key} "${name}" (id=${id}) into state`);
-        await ctx.run("tofu", ["import", key, String(id)], tofuDir, env);
+        await importResource(key, String(id));
     }
 }
 async function installCloudControllerManager(ctx) {
@@ -239,14 +272,20 @@ async function ensureNodesInitialized(ctx) {
 async function reconcileLbTargets(ctx) {
     const token = apiToken(ctx.cluster);
     const { load_balancers } = await hcloudGet(token, "/load_balancers");
-    if (load_balancers.length === 0)
+    // Only ever touch load balancers this project owns. Attaching our node to an
+    // unrelated (e.g. freshly-created, zero-target) LB in the same Hetzner
+    // project would silently route that LB's traffic to our cluster
+    // (audit finding 2.2). listResources/cleanup use the same `gezelligate` name
+    // prefix that kubernetesLbAnnotations assigns.
+    const ownLbs = load_balancers.filter((lb) => lb.name.startsWith("gezelligate"));
+    if (ownLbs.length === 0)
         return;
     const cpIp = (await ctx.capture("tofu", ["output", "-raw", "control_plane_ip"], ctx.tofuDir, ctx.env)).trim();
     const { servers } = await hcloudGet(token, "/servers?name=gezelligate-cp");
     const cpServer = servers.find((s) => s.public_net.ipv4.ip === cpIp);
     if (!cpServer)
         return;
-    for (const lb of load_balancers) {
+    for (const lb of ownLbs) {
         const alreadyAttached = lb.targets.some((t) => t.type === "server" && t.server?.id === cpServer.id);
         if (alreadyAttached)
             continue;
@@ -262,7 +301,13 @@ async function reconcileLbTargets(ctx) {
 async function cleanupHccmLoadBalancers(token) {
     const listed = await hcloudJson(token, "/load_balancers");
     const all = listed?.load_balancers ?? [];
-    const orphans = all.filter((lb) => Object.keys(lb.labels ?? {}).some((k) => k.startsWith("hcloud-ccm/")));
+    // Scope by BOTH the gezelligate name prefix AND the hcloud-ccm label. Every
+    // CCM-managed cluster in the project labels its LBs `hcloud-ccm/*`, so
+    // filtering on the label alone would delete OTHER clusters' production load
+    // balancers (audit finding 2.1). Our LB is named `gezelligate-*` via
+    // kubernetesLbAnnotations.
+    const orphans = all.filter((lb) => lb.name.startsWith("gezelligate") &&
+        Object.keys(lb.labels ?? {}).some((k) => k.startsWith("hcloud-ccm/")));
     if (orphans.length === 0)
         return;
     for (const lb of orphans) {
@@ -423,8 +468,22 @@ export const lifecycle = {
             }
         };
     },
-    async beforeTofuOperation(ctx) {
+    async beforeTofuOperation(ctx, op) {
         await adoptOrphans(ctx.tofuDir, apiToken(ctx.cluster), ctx);
+        if (op === "destroy") {
+            // The CCM-created LB lives outside tofu state and is attached to the
+            // private network tofu is about to delete — leaving it in place makes
+            // `tofu destroy` fail on hcloud_network.gezelligate, so the post-destroy
+            // sweep never runs and the LB bills indefinitely. Sweep it first
+            // (audit finding 2.3); afterTofuDestroy runs a second pass.
+            console.log("==> Pre-destroy sweep of gezelligate hccm load balancers");
+            try {
+                await cleanupHccmLoadBalancers(apiToken(ctx.cluster));
+            }
+            catch (err) {
+                console.error(`warning: pre-destroy LB sweep failed: ${err instanceof Error ? err.message : err}`);
+            }
+        }
     },
     async captureKubeconfig(ctx) {
         const localKc = path.join(ctx.tofuDir, "kubeconfig.yaml");

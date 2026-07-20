@@ -7,3 +7,11 @@ variable "project_id" {
   type    = string
   default = "{{form.projectId}}"
 }
+
+# Overridden by TF_VAR_k8s_version, which the provider lifecycle sets to the
+# newest supported Kapsule version at deploy time. This default is only used
+# if that resolution fails, so keep it to a currently-supported minor.
+variable "k8s_version" {
+  type    = string
+  default = "1.31"
+}
