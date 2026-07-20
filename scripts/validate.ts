@@ -1,10 +1,11 @@
 // Catalog validation entry — invoked by CI to fail fast on malformed yaml or
 // missing required files in any recipe / provider.
 //
-// Today this is a minimal structural check (every recipe has a service.yaml
-// readable as YAML, every provider has a provider.yaml + lifecycle.ts). The
-// full schema check + smoke-render + kubeconform pipeline lands once
-// @gezelligate/dev is published to npm — at that point this script becomes
+// This checks structure (readable YAML, required fields), that every template
+// referenced under `targets` exists, and that dependencies resolve to real
+// recipes. Full zod-schema validation + smoke-render + kubeconform is still
+// pending a version-pinned @gezelligate/core so CI can't fail on schema skew
+// (see audit findings 5.1 / 5.8); at that point this becomes
 // `gezelligate-dev validate && gezelligate-dev render --all && gezelligate-dev lint`.
 
 import fs from "node:fs/promises";
@@ -42,7 +43,7 @@ async function listDirs(parent: string): Promise<string[]> {
     .map((e) => e.name);
 }
 
-async function validateRecipe(name: string): Promise<void> {
+async function validateRecipe(name: string, allRecipes: string[]): Promise<void> {
   const dir = path.join(root, "recipes", name);
   const yamlPath = path.join(dir, "service.yaml");
   if (!(await exists(yamlPath))) {
@@ -60,6 +61,37 @@ async function validateRecipe(name: string): Promise<void> {
   }
   if (data.name !== name) {
     throw new ValidationError(yamlPath, `name "${data.name as string}" does not match directory "${name}"`);
+  }
+
+  // Every template file referenced under `targets` must exist — a deleted or
+  // typo'd template used to pass CI and only fail at the user's render
+  // (audit finding 6.9).
+  const targets = (data.targets ?? {}) as Record<string, Record<string, unknown>>;
+  const templateFields = ["template", "valuesTemplate"];
+  for (const [targetName, target] of Object.entries(targets)) {
+    if (typeof target !== "object" || target === null) continue;
+    for (const field of templateFields) {
+      const ref = target[field];
+      if (typeof ref !== "string") continue;
+      if (!(await exists(path.join(dir, ref)))) {
+        throw new ValidationError(
+          yamlPath,
+          `targets.${targetName}.${field} points at "${ref}" which does not exist`
+        );
+      }
+    }
+  }
+
+  // Every dependency must reference an existing recipe.
+  const deps = Array.isArray(data.dependencies) ? data.dependencies : [];
+  for (const dep of deps) {
+    const svc = (dep as { service?: unknown })?.service;
+    if (typeof svc !== "string") {
+      throw new ValidationError(yamlPath, `dependency entry is missing a string "service" field`);
+    }
+    if (!allRecipes.includes(svc)) {
+      throw new ValidationError(yamlPath, `dependency references unknown recipe "${svc}"`);
+    }
   }
 }
 
@@ -102,7 +134,7 @@ async function main(): Promise<void> {
 
   for (const name of recipes) {
     try {
-      await validateRecipe(name);
+      await validateRecipe(name, recipes);
     } catch (err) {
       if (err instanceof ValidationError) errors.push(err);
       else throw err;

@@ -21,7 +21,7 @@ jobs:
           node-version: "20"
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm install --frozen-lockfile
 
       - name: Structural validation
         run: pnpm validate
@@ -37,13 +37,19 @@ jobs:
             exit 1
           fi
 
-      - name: Regenerate catalog.json
-        run: pnpm generate-catalog-json
-
-      - name: Ensure committed catalog.json matches generator output
+      - name: Ensure committed catalog.json content matches generator output
         run: |
-          if ! git diff --quiet catalog.json; then
-            echo "::error::catalog.json is out of date - run 'pnpm generate-catalog-json' and commit the result."
-            git --no-pager diff catalog.json
+          # The generator stamps volatile ref/generatedAt fields on every run, so
+          # a plain `git diff` can never be clean (audit finding 6.8). Compare only
+          # the stable content and then restore the committed file so the tree
+          # stays clean for later steps.
+          cp catalog.json /tmp/catalog.committed.json
+          pnpm generate-catalog-json
+          committed=$(jq -S 'del(.ref, .generatedAt)' /tmp/catalog.committed.json)
+          regenerated=$(jq -S 'del(.ref, .generatedAt)' catalog.json)
+          git checkout -- catalog.json
+          if [ "$committed" != "$regenerated" ]; then
+            echo "::error::catalog.json content is out of date - run 'pnpm generate-catalog-json' and commit the result."
+            diff <(echo "$committed") <(echo "$regenerated") || true
             exit 1
           fi
