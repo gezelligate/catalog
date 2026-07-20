@@ -2,9 +2,12 @@
     image: lasuite/meet-backend:v1.14.0
     restart: unless-stopped
     depends_on:
-      - {{db.host}}
-      - {{redis.host}}
-      - livekit
+      {{db.host}}:
+        condition: service_healthy
+      {{redis.host}}:
+        condition: service_healthy
+      livekit:
+        condition: service_started
     environment:
       DJANGO_ALLOWED_HOSTS: "{{form.subdomain}}.{{global.baseDomain}}"
       DJANGO_SECRET_KEY: ${MEET_DJANGO_SECRET_KEY}

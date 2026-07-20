@@ -13,4 +13,5 @@
       - "7881:7881/tcp"
       - "7882:7882/udp"
     depends_on:
-      - {{redis.host}}
+      {{redis.host}}:
+        condition: service_healthy

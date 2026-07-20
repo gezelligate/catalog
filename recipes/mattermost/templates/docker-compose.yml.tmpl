@@ -2,8 +2,11 @@
     image: mattermost/mattermost-team-edition:release-10.4
     restart: unless-stopped
     depends_on:
-      - {{db.host}}
-      - keycloak
+      {{db.host}}:
+        condition: service_healthy
+      # keycloak's image has no shell tooling for a healthcheck; started-only.
+      keycloak:
+        condition: service_started
     environment:
       MM_SQLSETTINGS_DRIVERNAME: postgres
       MM_SQLSETTINGS_DATASOURCE: "postgres://{{db.user}}:${MATTERMOST_DB_PASSWORD}@{{db.host}}:{{db.port}}/{{db.name}}?sslmode=disable&connect_timeout=10"
