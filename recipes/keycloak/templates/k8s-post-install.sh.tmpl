@@ -1,0 +1,58 @@
+echo "==> Waiting for Keycloak to be Ready..."
+kubectl -n gezelligate rollout status statefulset/keycloak-keycloakx --timeout=300s
+echo "==> Authorising bridge token-exchange to each target client..."
+# Per-target token-exchange permissions for the source OIDC client.
+# Keycloak's --features=token-exchange,admin-fine-grained-authz enables
+# the grant type and the management permissions resource, but each
+# target client must explicitly authorise the source — there's no
+# "all internal clients can exchange to all others" toggle. We do this
+# by execing kcadm.sh inside the running Keycloak pod (no external
+# network calls, admin password stays in the pod's env).
+kubectl -n gezelligate exec keycloak-keycloakx-0 -- sh -c '
+set -e
+KCADM=/opt/keycloak/bin/kcadm.sh
+REALM=gezelligate
+SOURCE={{tokenExchangeSourceClientId}}
+TARGETS="{{tokenExchangeTargetClientIds}}"
+
+# Wait for the admin API to accept logins (the pod may report Ready before
+# the realm-management resources are fully initialised post-feature-flip).
+for _ in $(seq 1 30); do
+  if $KCADM config credentials --server http://localhost:8080 --realm master \
+       --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+extract_id() { grep -o "\"id\" : \"[^\"]*\"" | head -1 | cut -d\" -f4; }
+
+SOURCE_ID=$($KCADM get clients -r $REALM -q clientId=$SOURCE 2>/dev/null | extract_id)
+RM_ID=$($KCADM get clients -r $REALM -q clientId=realm-management 2>/dev/null | extract_id)
+if [ -z "$SOURCE_ID" ] || [ -z "$RM_ID" ]; then
+  echo "  token-exchange setup: missing client UUIDs (source=$SOURCE_ID rm=$RM_ID) — skipping."
+  exit 0
+fi
+
+for TARGET in $TARGETS; do
+  TARGET_ID=$($KCADM get clients -r $REALM -q clientId=$TARGET 2>/dev/null | extract_id)
+  [ -z "$TARGET_ID" ] && { echo "  $TARGET: client not found, skipping"; continue; }
+
+  $KCADM update clients/$TARGET_ID/management/permissions -r $REALM -s enabled=true >/dev/null
+  TX_PERM_UUID=$($KCADM get clients/$TARGET_ID/management/permissions -r $REALM | tr -d "\n" | sed "s/.*\"token-exchange\" : \"\([^\"]*\)\".*/\1/")
+
+  POLICY_NAME="$SOURCE-can-token-exchange-to-$TARGET"
+  printf "%s" "{\"type\":\"client\",\"name\":\"$POLICY_NAME\",\"clients\":[\"$SOURCE_ID\"],\"logic\":\"POSITIVE\",\"decisionStrategy\":\"UNANIMOUS\"}" > /tmp/policy.json
+  $KCADM create clients/$RM_ID/authz/resource-server/policy/client -r $REALM -f /tmp/policy.json >/dev/null 2>&1 || true
+  POLICY_UUID=$($KCADM get clients/$RM_ID/authz/resource-server/policy/client -r $REALM 2>/dev/null | grep -B2 "\"name\" : \"$POLICY_NAME\"" | grep "\"id\"" | head -1 | cut -d\" -f4)
+
+  # Keycloak rejects partial PUTs (NOT NULL on resource_server_policy.name),
+  # so round-trip the whole permission object with the policies list added.
+  $KCADM get clients/$RM_ID/authz/resource-server/permission/scope/$TX_PERM_UUID -r $REALM > /tmp/perm.json
+  python3 -c "import json,sys; d=json.load(open(\"/tmp/perm.json\")); d[\"policies\"]=[\"$POLICY_UUID\"]; json.dump(d, open(\"/tmp/perm.json\",\"w\"))"
+  $KCADM update clients/$RM_ID/authz/resource-server/permission/scope/$TX_PERM_UUID -r $REALM -f /tmp/perm.json >/dev/null
+  echo "  $SOURCE -> $TARGET: authorised"
+done
+
+rm -f /tmp/policy.json /tmp/perm.json
+'

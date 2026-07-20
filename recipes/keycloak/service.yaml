@@ -35,6 +35,11 @@ provides:
     passwordEnv: ADMIN_PASSWORD
   oidcServer:
     realmEnv: KEYCLOAK_REALM
+    # Appended (non-fatally) to the k8s install.sh after the helm releases;
+    # authorises token-exchange from the bridge client to every other OIDC
+    # client via kcadm inside the Keycloak pod (audit 5.2 — this Keycloak
+    # specificity lives here, not in the engine).
+    postInstall: templates/k8s-post-install.sh.tmpl
   ingress:
     host: "{{form.subdomain}}.{{global.baseDomain}}"
     port: 8080
@@ -49,5 +54,6 @@ targets:
     template: templates/docker-compose.yml.tmpl
   kubernetes:
     helmChart: codecentric/keycloakx
+    helmRepo: https://codecentric.github.io/helm-charts
     helmVersion: "3.0.0"
     valuesTemplate: templates/helm-values.yaml.tmpl
