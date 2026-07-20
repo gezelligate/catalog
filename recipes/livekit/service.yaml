@@ -1,3 +1,4 @@
+schemaVersion: 1
 name: livekit
 displayName: LiveKit Media Server
 description: WebRTC SFU used by Meet for video and audio. Auto-included whenever Meet is enabled. Never shown in the wizard.

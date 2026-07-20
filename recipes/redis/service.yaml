@@ -1,3 +1,4 @@
+schemaVersion: 1
 name: redis
 displayName: Shared Redis
 description: Single Redis instance shared by all services that declare redis.shared. Auto-included — never shown in the wizard.

@@ -1,3 +1,4 @@
+schemaVersion: 1
 name: scaleway
 displayName: Scaleway Kapsule
 description: Managed Kubernetes on Scaleway (fr-par, nl-ams, pl-waw).

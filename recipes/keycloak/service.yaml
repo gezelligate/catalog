@@ -1,3 +1,4 @@
+schemaVersion: 1
 name: keycloak
 displayName: Keycloak
 description: Identity and SSO provider. Required by every other service in the stack.
